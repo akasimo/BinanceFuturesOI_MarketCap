@@ -2,40 +2,54 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
 import pandas as pd
+import seaborn as sns
 import requests
 import matplotlib.pyplot as plt
+import pickle 
+import os
+import datetime
+
+TOP_N_VOLUME_SYMBOLS = 10
+
 
 BINANCE_TO_COINGECKO_MAP = {
     "1000SHIBUSDT": "shib",
     # Add more mappings if needed
 }
 
-api_key = "YOUR_API_KEY"
-api_secret = "YOUR_API_SECRET"
 
-client = Client(api_key, api_secret)
-from binance.exceptions import BinanceAPIException
+client = Client("api_key", "api_secret")
 
 def get_futures_open_interest():
-    try:
-        futures_volume_data = client.futures_ticker()
-    except BinanceAPIException as e:
-        print(f"Error fetching 24-hour ticker for all symbols: {e.message}")
-        return pd.DataFrame()
+    
+    futures_volume_data = client.futures_ticker()
+    # except BinanceAPIException as e:
+    #     print(f"Error fetching 24-hour ticker for all symbols: {e.message}")
+    #     return pd.DataFrame()
 
     volume_df = pd.DataFrame(futures_volume_data)
     volume_df = volume_df[volume_df.symbol.str.contains("USDT")]
-    volume_df["quoteVolume"] = volume_df["quoteVolume"].astype(float)
-    top_20_volume_symbols = volume_df.sort_values(by="quoteVolume", ascending=False).head(20)
-    top_20_volume_symbols["lastPrice"] = top_20_volume_symbols["lastPrice"].astype(float)
+    for col in ["quoteVolume", "lastPrice", "priceChangePercent"]:
+        volume_df[col] = volume_df[col].astype(float)    
+    # volume_df["quoteVolume"] = volume_df["quoteVolume"].astype(float)
+    # volume_df["priceChangePercent"] = volume_df["priceChangePercent"].astype(float)
+
+    top_volume_symbols = volume_df.sort_values(by="quoteVolume", ascending=False).head(TOP_N_VOLUME_SYMBOLS)
+    top_volume_symbols["lastPrice"] = top_volume_symbols["lastPrice"].astype(float)
 
     futures_data = []
-    for symbol in top_20_volume_symbols["symbol"]:
+    for symbol in top_volume_symbols["symbol"]:
         try:
             open_interest = client.futures_open_interest(symbol=symbol)
             open_interest["openInterest"] = float(open_interest["openInterest"])
-            last_price = top_20_volume_symbols.loc[top_20_volume_symbols["symbol"] == symbol, "lastPrice"].values[0]
+            last_price = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, "lastPrice"].values[0]
             open_interest["openInterestUSD"] = open_interest["openInterest"] * last_price
+
+            for col in ["quoteVolume", "lastPrice", "priceChangePercent"]:
+                open_interest[col] = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, col].values[0]
+            # open_interest["quoteVolume"] = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, "quoteVolume"].values[0]
+            # open_interest["priceChangePercent"] = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, "priceChangePercent"].values[0]
+
             futures_data.append(open_interest)
         except BinanceAPIException as e:
             if e.code == -4108:
@@ -49,6 +63,10 @@ def get_futures_open_interest():
 def binance_symbol_to_coingecko_id(symbol):
     if symbol in BINANCE_TO_COINGECKO_MAP:
         return BINANCE_TO_COINGECKO_MAP[symbol]
+    
+    if "_" in symbol:
+        symbol = symbol.split("_")[0]
+
 
     symbol = symbol.replace("USDT", "").replace("BUSD", "")
     if symbol.startswith("1000"):
@@ -57,19 +75,25 @@ def binance_symbol_to_coingecko_id(symbol):
 
 def get_coingecko_market_caps(symbols):
     coingecko_ids = [binance_symbol_to_coingecko_id(symbol) for symbol in symbols]
-    # url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"
-    # response = requests.get(url)
-    # market_data = response.json()
-    # market_data_df = pd.DataFrame(market_data)
+    file_name = "coingecko_market_data.pkl"
 
-    per_page = 1000
-    market_data = []
-    for page in range(1, 3 + 1):
-        url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page={per_page}&page={page}"
-        response = requests.get(url)
-        page_market_data = response.json()
-        market_data.extend(page_market_data)
-    market_data_df = pd.DataFrame(market_data)
+    # Check if the file exists and was modified within the last 24 hours
+    if os.path.exists(file_name) and datetime.datetime.fromtimestamp(os.path.getmtime(file_name)) > datetime.datetime.now() - datetime.timedelta(hours=24):
+        with open(file_name, "rb") as file:
+            market_data_df = pickle.load(file)
+    else:
+        per_page = 250
+        market_data = []
+        for page in range(1, 6 + 1):
+            url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page={per_page}&page={page}"
+            response = requests.get(url)
+            page_market_data = response.json()
+            market_data.extend(page_market_data)
+        market_data_df = pd.DataFrame(market_data)
+
+        # Save the fetched market data to a file
+        with open(file_name, "wb") as file:
+            pickle.dump(market_data_df, file)
 
     market_caps = {}
     for symbol, coingecko_id in zip(symbols, coingecko_ids):
@@ -77,30 +101,14 @@ def get_coingecko_market_caps(symbols):
         if not row.empty:
             market_caps[symbol] = row.iloc[0]['market_cap']
         else:
-            pass
+            print(f"Missing market cap for {symbol} ({coingecko_id})")
+
     return market_caps
-
-# def get_coingecko_market_data(symbols):
-#     coingecko_ids = [binance_symbol_to_coingecko_id(symbol) for symbol in symbols]
-#     market_data = []
-#     for coingecko_id in coingecko_ids:
-#         try:
-#             data = cg.get_coin_by_id(coingecko_id)
-#             market_data.append({
-#                 "id": data["id"],
-#                 "symbol": data["symbol"].upper(),
-#                 "market_cap": data["market_data"]["market_cap"]["usd"]
-#             })
-#         except Exception as e:
-#             print(f"Error fetching market data for {coingecko_id}: {e}")
-#     market_data_df = pd.DataFrame(market_data)
-#     return market_data_df
-
 
 def calculate_oi_market_cap_ratio(open_interest_df, market_caps):
     open_interest_df['market_cap'] = open_interest_df['symbol'].map(market_caps)
-    open_interest_df['oi_market_cap_ratio'] = open_interest_df['openInterest'] / open_interest_df['market_cap']
-    return open_interest_df
+    open_interest_df['oi_market_cap_ratio'] = open_interest_df['openInterestUSD'] / open_interest_df['market_cap']
+    return open_interest_df.dropna()
 
 def get_futures_hourly_changes(open_interest_df):
     klines = {}
@@ -111,11 +119,61 @@ def get_futures_hourly_changes(open_interest_df):
         klines[symbol] = hourly_change
     return klines
 
-def plot_scatter(oi_market_cap_ratios, hourly_changes):
-    fig, ax = plt.subplots()
-    ax.scatter(oi_market_cap_ratios, hourly_changes)
+def plot_scatter(x, y, labels):
+    fig, ax = plt.subplots(figsize=(12, 8))  # Increase the size of the chart
+
+    ax.scatter(x, y)
+
+    # Add symbol names as annotations to each point
+    for i, label in enumerate(labels):
+        ax.annotate(label, (x.values[i], y.values[i]), fontsize=8, ha='right', va='bottom')
+
     ax.set_xlabel('OI/Market Cap')
-    ax.set_ylabel('Hourly Change')
+    ax.set_ylabel('Daily Change')
+
+    ax.grid(True)  # Introduce grid lines
+    ax.set_title('OI/Market Cap vs Hourly Change for Top N Volume Symbols')  # Add title
+
+    plt.show()
+
+def plot_joint_scatter_chart(x, y, labels):
+    data = {
+        'OI/Market Cap': x,
+        'Daily Change': y,
+        'Symbol': labels
+    }
+
+    df = pd.DataFrame(data)
+
+    g = sns.jointplot(data=df,
+                      x='OI/Market Cap',
+                      y='Daily Change',
+                      kind="scatter",
+                      marginal_kws=dict(bins=25, fill=False),
+                      height=8,
+                      alpha=0.6)
+
+    g.set_axis_labels('OI/Market Cap', 'Daily Change', fontsize=12)
+    g.fig.suptitle('OI/Market Cap vs Daily Change for Top N Volume Symbols', fontsize=16, y=1.03)
+
+    plt.show()
+
+
+def create_heatmap(df):
+    # Normalize data to a range between 0 and 1
+    normalized_df = (df - df.min()) / (df.max() - df.min())
+
+    # Create a pivot table from the DataFrame
+    pivot_table = normalized_df.pivot_table(
+        values='priceChangePercent',
+        index='symbol',
+        columns='oi_market_cap_ratio'
+    )
+
+    # Generate the heatmap
+    fig, ax = plt.subplots(figsize=(12, 8))
+    sns.heatmap(pivot_table, annot=True, cmap='coolwarm', ax=ax)
+    ax.set_title('Heatmap of OI/Market Cap vs Daily Change for Top N Volume Symbols')
     plt.show()
 
 def main():
@@ -125,10 +183,12 @@ def main():
     market_caps = get_coingecko_market_caps(symbols)
     open_interest_df = calculate_oi_market_cap_ratio(open_interest_df, market_caps)
     
-    hourly_changes = get_futures_hourly_changes(open_interest_df)
-    open_interest_df['hourly_change'] = open_interest_df['symbol'].map(hourly_changes)
     
-    plot_scatter(open_interest_df['oi_market_cap_ratio'], open_interest_df['hourly_change'])
+    plot_scatter(open_interest_df['oi_market_cap_ratio'], open_interest_df['priceChangePercent'], open_interest_df['symbol'])
+    # plot_joint_scatter_chart(open_interest_df['oi_market_cap_ratio'], open_interest_df['priceChangePercent'], open_interest_df['symbol'])
+
+    # Call the function with your data
+    # create_heatmap(open_interest_df)
     a = 1
 
 if __name__ == "__main__":
