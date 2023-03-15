@@ -1,38 +1,30 @@
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
 
-import pandas as pd
-import seaborn as sns
-import requests
-import matplotlib.pyplot as plt
 import pickle 
 import os
 import datetime
+import requests
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+from binance.client import Client
+from binance.exceptions import BinanceAPIException
 
 TOP_N_VOLUME_SYMBOLS = 10
-
 
 BINANCE_TO_COINGECKO_MAP = {
     "1000SHIBUSDT": "shib",
     # Add more mappings if needed
 }
 
-
 client = Client("api_key", "api_secret")
 
 def get_futures_open_interest():
-    
     futures_volume_data = client.futures_ticker()
-    # except BinanceAPIException as e:
-    #     print(f"Error fetching 24-hour ticker for all symbols: {e.message}")
-    #     return pd.DataFrame()
-
     volume_df = pd.DataFrame(futures_volume_data)
     volume_df = volume_df[volume_df.symbol.str.contains("USDT")]
     for col in ["quoteVolume", "lastPrice", "priceChangePercent"]:
-        volume_df[col] = volume_df[col].astype(float)    
-    # volume_df["quoteVolume"] = volume_df["quoteVolume"].astype(float)
-    # volume_df["priceChangePercent"] = volume_df["priceChangePercent"].astype(float)
+        volume_df[col] = volume_df[col].astype(float)
 
     top_volume_symbols = volume_df.sort_values(by="quoteVolume", ascending=False).head(TOP_N_VOLUME_SYMBOLS)
     top_volume_symbols["lastPrice"] = top_volume_symbols["lastPrice"].astype(float)
@@ -47,8 +39,6 @@ def get_futures_open_interest():
 
             for col in ["quoteVolume", "lastPrice", "priceChangePercent"]:
                 open_interest[col] = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, col].values[0]
-            # open_interest["quoteVolume"] = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, "quoteVolume"].values[0]
-            # open_interest["priceChangePercent"] = top_volume_symbols.loc[top_volume_symbols["symbol"] == symbol, "priceChangePercent"].values[0]
 
             futures_data.append(open_interest)
         except BinanceAPIException as e:
@@ -66,7 +56,6 @@ def binance_symbol_to_coingecko_id(symbol):
     
     if "_" in symbol:
         symbol = symbol.split("_")[0]
-
 
     symbol = symbol.replace("USDT", "").replace("BUSD", "")
     if symbol.startswith("1000"):
@@ -120,7 +109,7 @@ def get_futures_hourly_changes(open_interest_df):
     return klines
 
 def plot_scatter(x, y, labels):
-    fig, ax = plt.subplots(figsize=(12, 8))  # Increase the size of the chart
+    _, ax = plt.subplots(figsize=(12, 8))  # Increase the size of the chart
 
     ax.scatter(x, y)
 
@@ -179,17 +168,12 @@ def create_heatmap(df):
 def main():
     open_interest_df = get_futures_open_interest()
     symbols = open_interest_df['symbol'].unique()
-    
     market_caps = get_coingecko_market_caps(symbols)
     open_interest_df = calculate_oi_market_cap_ratio(open_interest_df, market_caps)
     
-    
     plot_scatter(open_interest_df['oi_market_cap_ratio'], open_interest_df['priceChangePercent'], open_interest_df['symbol'])
     # plot_joint_scatter_chart(open_interest_df['oi_market_cap_ratio'], open_interest_df['priceChangePercent'], open_interest_df['symbol'])
-
-    # Call the function with your data
     # create_heatmap(open_interest_df)
-    a = 1
 
 if __name__ == "__main__":
     main()
