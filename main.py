@@ -10,7 +10,7 @@ import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
-TOP_N_VOLUME_SYMBOLS = 10
+TOP_N_VOLUME_SYMBOLS = 30
 
 BINANCE_TO_COINGECKO_MAP = {
     "1000SHIBUSDT": "shib",
@@ -115,14 +115,15 @@ def plot_scatter(x, y, labels):
 
     # Add symbol names as annotations to each point
     for i, label in enumerate(labels):
-        ax.annotate(label, (x.values[i], y.values[i]), fontsize=8, ha='right', va='bottom')
+        ax.annotate(label, (x.values[i], y.values[i]), fontsize=7, ha='right', va='bottom')
 
     ax.set_xlabel('OI/Market Cap')
     ax.set_ylabel('Daily Change')
 
     ax.grid(True)  # Introduce grid lines
     ax.set_title('OI/Market Cap vs Hourly Change for Top N Volume Symbols')  # Add title
-
+    
+    plt.savefig('scatter_plot.png', dpi=300)  # Save the figure as an image file
     plt.show()
 
 def plot_joint_scatter_chart(x, y, labels):
@@ -170,8 +171,10 @@ def main():
     symbols = open_interest_df['symbol'].unique()
     market_caps = get_coingecko_market_caps(symbols)
     open_interest_df = calculate_oi_market_cap_ratio(open_interest_df, market_caps)
+    print(open_interest_df.set_index("symbol"))
     
     plot_scatter(open_interest_df['oi_market_cap_ratio'], open_interest_df['priceChangePercent'], open_interest_df['symbol'])
+    
     # plot_joint_scatter_chart(open_interest_df['oi_market_cap_ratio'], open_interest_df['priceChangePercent'], open_interest_df['symbol'])
     # create_heatmap(open_interest_df)
 
